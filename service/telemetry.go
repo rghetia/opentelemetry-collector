@@ -16,6 +16,7 @@ package service
 
 import (
 	"flag"
+	"github.com/open-telemetry/opentelemetry-service/processor/metricsaggregatorprocessor"
 	"log"
 	"net/http"
 	"strconv"
@@ -68,6 +69,7 @@ func (tel *appTelemetry) init(asyncErrorChannel chan<- error, ballastSizeBytes u
 	views := processor.MetricViews(level)
 	views = append(views, queuedprocessor.MetricViews(level)...)
 	views = append(views, nodebatcherprocessor.MetricViews(level)...)
+	views = append(views, metricsaggregatorprocessor.MetricViews(level)...)
 	views = append(views, observability.AllViews...)
 	views = append(views, tailsamplingprocessor.SamplingProcessorMetricViews(level)...)
 	processMetricsViews := telemetry.NewProcessMetricsViews(ballastSizeBytes)
