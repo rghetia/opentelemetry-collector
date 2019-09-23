@@ -16,29 +16,36 @@ package metricsaggregatorprocessor
 
 import (
 	"context"
+	"fmt"
+	"github.com/open-telemetry/opentelemetry-service/processor/metricsaggregatorprocessor/internal"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
 
+	commonpb "github.com/census-instrumentation/opencensus-proto/gen-go/agent/common/v1"
+	metricspb "github.com/census-instrumentation/opencensus-proto/gen-go/metrics/v1"
+	resourcepb "github.com/census-instrumentation/opencensus-proto/gen-go/resource/v1"
 	"github.com/open-telemetry/opentelemetry-service/consumer"
 	"github.com/open-telemetry/opentelemetry-service/consumer/consumerdata"
 )
 
 const (
-	defaultReportingInterval           = 60 * time.Second
+	defaultReportingInterval = 60 * time.Second
 )
 
 // aggregator is a component that accepts metrics, and aggregates them over ReportingInterval.
 //
 // aggregator implements consumer.MetricsConsumer
 type aggregator struct {
-	sender  consumer.MetricsConsumer
-	name    string
-	logger  *zap.Logger
+	jobsMap *internal.JobsMap
+	sender consumer.MetricsConsumer
+	name   string
+	logger *zap.Logger
 
 	reportingInterval time.Duration
-	dropResourceKeys []string
-	dropLabelKeys []string
+	dropResourceKeys  []string
+	dropLabelKeys     []string
 }
 
 var _ consumer.MetricsConsumer = (*aggregator)(nil)
@@ -59,6 +66,7 @@ func NewAggregator(name string, logger *zap.Logger, sender consumer.MetricsConsu
 		opt(b)
 	}
 
+	b.jobsMap = internal.NewJobsMap(time.Duration(2 * time.Minute))
 	//Start timer to export metrics
 	return b
 }
@@ -66,5 +74,22 @@ func NewAggregator(name string, logger *zap.Logger, sender consumer.MetricsConsu
 // ConsumeTraceData implements aggregator as a SpanProcessor and takes the provided spans and adds them to
 // batches
 func (b *aggregator) ConsumeMetricsData(ctx context.Context, td consumerdata.MetricsData) error {
+	for _, m := range td.Metrics {
+		for _, ts := range m.Timeseries {
+			b.processTimeSeries(td.Resource, m, ts)
+		}
+	}
 	return nil
+}
+
+func (b *aggregator) processTimeSeries(res *resourcepb.Resource, metric *metricspb.Metric, ts *metricspb.TimeSeries) {
+	sig := getSigWithResAndLabels(res, metric, ts)
+
+	// Adjust and Get Updated TS
+
+	// For
+	//
+
+	newResKeys := []string{}
+	newResLab
 }

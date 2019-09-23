@@ -24,8 +24,8 @@ import (
 )
 
 var (
-	statAggregationMetricsCacheSize = stats.Int64("aggregation_metrics_cache_size", "Size of metrics aggregation cache", stats.UnitDimensionless)
-	statAggregationMetricsCacheAdded = stats.Int64("aggregation_metrics_cache_added", "# of metrics added to aggregation cache", stats.UnitDimensionless)
+	statAggregationMetricsCacheSize    = stats.Int64("aggregation_metrics_cache_size", "Size of metrics aggregation cache", stats.UnitDimensionless)
+	statAggregationMetricsCacheAdded   = stats.Int64("aggregation_metrics_cache_added", "# of metrics added to aggregation cache", stats.UnitDimensionless)
 	statAggregationMetricsCacheRemoved = stats.Int64("aggregation_metrics_cache_removed", "# of metrics removed to aggregation cache", stats.UnitDimensionless)
 )
 

@@ -53,7 +53,7 @@ func TestLoadConfig(t *testing.T) {
 				NameVal: "aggregator/2",
 			},
 			Reportinginterval: &reportingInterval,
-			DropLabelKeys: dropLabelKeys,
-			DropResourceKeys: dropResourceKeys,
+			DropLabelKeys:     dropLabelKeys,
+			DropResourceKeys:  dropResourceKeys,
 		})
 }

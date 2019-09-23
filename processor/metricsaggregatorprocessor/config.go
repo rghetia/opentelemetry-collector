@@ -26,6 +26,6 @@ type Config struct {
 
 	// Reportinginterval sets the time after which a aggregator will be sent regardless of size.
 	Reportinginterval *time.Duration `mapstructure:"reporting-interval,omitempty"`
-	DropResourceKeys []string `mapstructure:"drop-resource-keys"`
-	DropLabelKeys []string `mapstructure:"drop-label-keys"`
+	DropResourceKeys  []string       `mapstructure:"drop-resource-keys"`
+	DropLabelKeys     []string       `mapstructure:"drop-label-keys"`
 }
