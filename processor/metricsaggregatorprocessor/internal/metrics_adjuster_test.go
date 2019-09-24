@@ -112,7 +112,7 @@ func runScript(t *testing.T, tsm *timeseriesMap, script []*metricsAdjusterTest) 
 	for _, test := range script {
 		ma := NewMetricsAdjuster(tsm, l.Sugar())
 		readTestCaseFromFiles(t, test)
-		ma.AdjustMetrics(test.dropResKeyMap, test.dropLabelKeyMap, nil, test.inMetrics)
+		ma.AggregateMetrics(test.dropResKeyMap, test.dropLabelKeyMap, nil, test.inMetrics)
 		gotMetrics := ma.ExportTimeSeries()
 		diff := cmp.Diff(gotMetrics, test.outMetrics, cmpopts.IgnoreFields(timestamp.Timestamp{}, "XXX_sizecache"),
 			cmpopts.IgnoreFields(metricspb.TimeSeries{}, "StartTimestamp"),

@@ -265,7 +265,7 @@ func (am *aggMetric) getOrCreateTimeSeries(dropResKeys, dropLabelKeys map[string
 	return ts
 }
 
-// timeseriesinfo contains the information necessary to adjust from the initial point and to detect
+// timeseriesinfo contains the information necessary to aggregate from the initial point and to detect
 // resets.
 type timeseriesinfo struct {
 	mark     bool
@@ -394,18 +394,18 @@ func (jm *JobsMap) Get(job, instance string) *timeseriesMap {
 	return tsm2
 }
 
-// MetricsAdjuster takes a map from a metric instance to the initial point in the inMetrics instance
-// and provides AdjustMetrics, which takes a sequence of inMetrics and adjust their values based on
+// MetricsAggregator takes a map from a metric instance to the initial point in the inMetrics instance
+// and provides AggregateMetrics, which takes a sequence of inMetrics and aggregate their values based on
 // the initial points.
-type MetricsAdjuster struct {
+type MetricsAggregator struct {
 	tsm    *timeseriesMap
 	asm    *aggResourceMap
 	logger *zap.SugaredLogger
 }
 
-// NewMetricsAdjuster is a constructor for MetricsAdjuster.
-func NewMetricsAdjuster(tsm *timeseriesMap, logger *zap.SugaredLogger) *MetricsAdjuster {
-	return &MetricsAdjuster{
+// NewMetricsAdjuster is a constructor for MetricsAggregator.
+func NewMetricsAdjuster(tsm *timeseriesMap, logger *zap.SugaredLogger) *MetricsAggregator {
+	return &MetricsAggregator{
 		tsm:    tsm,
 		logger: logger,
 		asm: &aggResourceMap{
@@ -414,11 +414,13 @@ func NewMetricsAdjuster(tsm *timeseriesMap, logger *zap.SugaredLogger) *MetricsA
 	}
 }
 
-// AdjustMetrics takes a sequence of inMetrics and adjust their values based on the initial and
-// previous points in the timeseriesMap. If the metric is the first point in the timeseries, or the
-// timeseries has been reset, it is removed from the sequence and added to the the timeseriesMap.
-func (ma *MetricsAdjuster) AdjustMetrics(dropResKeys, dropLabelKeys map[string]bool, res *resourcepb.Resource, metrics []*metricspb.Metric) {
-	var adjusted = make([]*metricspb.Metric, 0, len(metrics))
+// AggregateMetrics takes a sequence of inMetrics and aggregate the delta between current and
+// previous points in the timeseriesMap. If the metric is the first point in the timeseries, it is
+// not aggregated. If the timeseries resets then it is aggregated with new value treated as delta.
+// TODO: When there is a large gap between reporting.
+// Metrics that are not aggregated are returned as is.
+func (ma *MetricsAggregator) AggregateMetrics(dropResKeys, dropLabelKeys map[string]bool, res *resourcepb.Resource, metrics []*metricspb.Metric) []*metricspb.Metric{
+	var notAggregated = make([]*metricspb.Metric, 0, len(metrics))
 	ma.tsm.Lock()
 	defer ma.tsm.Unlock()
 	for _, metric := range metrics {
@@ -426,35 +428,31 @@ func (ma *MetricsAdjuster) AdjustMetrics(dropResKeys, dropLabelKeys map[string]b
 		if metric.Resource == nil {
 			metric.Resource = res
 		}
-		if ma.adjustMetric(dropResKeys, dropLabelKeys, metric) {
-			adjusted = append(adjusted, metric)
+		if !ma.aggregateMetric(dropResKeys, dropLabelKeys, metric) {
+			notAggregated = append(notAggregated, metric)
 		}
 	}
+	return notAggregated
 }
 
-// Returns true if at least one of the metric's timeseries was adjusted and false if all of the
-// timeseries are an initial occurrence or a reset.
+// Returns false if metric is not aggregated.
 //
-// Types of inMetrics returned supported by prometheus:
-// - MetricDescriptor_GAUGE_DOUBLE
-// - MetricDescriptor_GAUGE_DISTRIBUTION
+// Types of inMetrics aggregated by metrics aggregator processor:
 // - MetricDescriptor_CUMULATIVE_DOUBLE
+// - MetricDescriptor_CUMULATIVE_INT64
 // - MetricDescriptor_CUMULATIVE_DISTRIBUTION
-// - MetricDescriptor_SUMMARY
-func (ma *MetricsAdjuster) adjustMetric(dropResKeys, dropLabelKeys map[string]bool, metric *metricspb.Metric) bool {
+func (ma *MetricsAggregator) aggregateMetric(dropResKeys, dropLabelKeys map[string]bool, metric *metricspb.Metric) bool {
 	switch metric.MetricDescriptor.Type {
-	case metricspb.MetricDescriptor_GAUGE_DOUBLE, metricspb.MetricDescriptor_GAUGE_DISTRIBUTION:
-		// gauges don't need to be adjusted so no additional processing is necessary
-		return true
+	case metricspb.MetricDescriptor_GAUGE_DOUBLE, metricspb.MetricDescriptor_GAUGE_DISTRIBUTION, metricspb.MetricDescriptor_SUMMARY:
+		// gauges don't need to be aggregated so no additional processing is necessary
+		return false
 	default:
-		return ma.adjustMetricTimeseries(dropResKeys, dropLabelKeys, metric)
+		ma.aggregateMetricTimeseries(dropResKeys, dropLabelKeys, metric)
+		return true
 	}
 }
 
-// Returns true if at least one of the metric's timeseries was adjusted and false if all of the
-// timeseries are an initial occurrence or a reset.
-func (ma *MetricsAdjuster) adjustMetricTimeseries(dropResKeys, dropLabelKeys map[string]bool, metric *metricspb.Metric) bool {
-	filtered := make([]*metricspb.TimeSeries, 0, len(metric.GetTimeseries()))
+func (ma *MetricsAggregator) aggregateMetricTimeseries(dropResKeys, dropLabelKeys map[string]bool, metric *metricspb.Metric) {
 	for _, current := range metric.GetTimeseries() {
 		tsi := ma.tsm.get(metric, metric.Resource, current.GetLabelValues())
 		if tsi.previous == nil {
@@ -465,12 +463,10 @@ func (ma *MetricsAdjuster) adjustMetricTimeseries(dropResKeys, dropLabelKeys map
 			// initial timeseries
 			tsi.previous = current
 		} else {
-			ma.adjustAggTimeSeries(metric.MetricDescriptor.Type, tsi, current)
+			ma.aggTimeSeries(metric.MetricDescriptor.Type, tsi, current)
 			tsi.previous = current
 		}
 	}
-	metric.Timeseries = filtered
-	return len(filtered) > 0
 }
 
 func timeToProtoTimestamp(t time.Time) *timestamp.Timestamp {
@@ -481,7 +477,7 @@ func timeToProtoTimestamp(t time.Time) *timestamp.Timestamp {
 	}
 }
 
-func (ma *MetricsAdjuster) adjustAggTimeSeries(metricType metricspb.MetricDescriptor_Type,
+func (ma *MetricsAggregator) aggTimeSeries(metricType metricspb.MetricDescriptor_Type,
 	tsi *timeseriesinfo, current *metricspb.TimeSeries) {
 	switch metricType {
 	case metricspb.MetricDescriptor_CUMULATIVE_DOUBLE:
@@ -539,23 +535,22 @@ func (ma *MetricsAdjuster) adjustAggTimeSeries(metricType metricspb.MetricDescri
 		agg := tsi.aggTs.GetPoints()[0].GetDistributionValue()
 		agg.Count += deltaCount
 		agg.Sum += deltaSum
-		ma.adjustBuckets(agg, curr, prev, resetDetected)
+		ma.aggregateBuckets(agg, curr, prev, resetDetected)
 		tsi.aggTs.Points[0].Timestamp = timeToProtoTimestamp(time.Now())
 	case metricspb.MetricDescriptor_SUMMARY:
 	default:
 		// this shouldn't happen
-		ma.logger.Infof("adjust unexpect point type %v, skipping ...", metricType.String())
+		ma.logger.Infof("aggregate unexpect point type %v, skipping ...", metricType.String())
 	}
 }
 
-func (ma *MetricsAdjuster) adjustBuckets(agg, curr, prev *metricspb.DistributionValue, resetDetected bool) {
+func (ma *MetricsAggregator) aggregateBuckets(agg, curr, prev *metricspb.DistributionValue, resetDetected bool) {
 	if len(curr.Buckets) != len(agg.Buckets) ||
 		len(prev.Buckets) != len(agg.Buckets) {
 		// TODO: Error count
 		ma.logger.Infof("Buckets lengths unequal agg:%v\n, curr:%v\n, prev%v\n", agg, curr, prev)
 		return
 	}
-	ma.logger.Infof("Buckets lengths unequal agg:%v\n, curr:%v\n, prev%v\n", agg, curr, prev)
 	if resetDetected {
 		for i, cb := range curr.Buckets {
 			agg.Buckets[i].Count += cb.Count
@@ -563,14 +558,13 @@ func (ma *MetricsAdjuster) adjustBuckets(agg, curr, prev *metricspb.Distribution
 		}
 	} else {
 		for i, cb := range curr.Buckets {
-			fmt.Printf("Bucket %d\n", i)
 			agg.Buckets[i].Count += curr.Buckets[i].Count - prev.Buckets[i].Count
 			agg.Buckets[i].Exemplar = cb.Exemplar
 		}
 	}
 }
 
-func (ma *MetricsAdjuster) ExportTimeSeries() []*metricspb.Metric {
+func (ma *MetricsAggregator) ExportTimeSeries() []*metricspb.Metric {
 	metrics := make([]*metricspb.Metric, 0)
 	ma.asm.Lock()
 	defer ma.asm.Unlock()

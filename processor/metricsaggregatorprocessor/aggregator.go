@@ -37,7 +37,7 @@ const (
 // aggregator implements consumer.MetricsConsumer
 type aggregator struct {
 	jobsMap  *internal.JobsMap
-	adjuster *internal.MetricsAdjuster
+	adjuster *internal.MetricsAggregator
 	sender   consumer.MetricsConsumer
 	name     string
 	logger   *zap.SugaredLogger
@@ -110,9 +110,13 @@ func NewAggregator(name string, logger *zap.SugaredLogger, sender consumer.Metri
 	return b
 }
 
-// ConsumeTraceData implements aggregator as a SpanProcessor and takes the provided spans and adds them to
-// batches
+// ConsumeMetricsData implements metrics aggregator and takes the provided metrics and aggregates
+// them after removing one or more resource or labels.
 func (b *aggregator) ConsumeMetricsData(ctx context.Context, td consumerdata.MetricsData) error {
-	b.adjuster.AdjustMetrics(b.dropResourceKeyMap, b.dropLabelKeyMap, td.Resource, td.Metrics)
+	notAggregated := b.adjuster.AggregateMetrics(b.dropResourceKeyMap, b.dropLabelKeyMap, td.Resource, td.Metrics)
+	if len(notAggregated) > 0 {
+		td.Metrics = notAggregated
+		return b.sender.ConsumeMetricsData(ctx, td)
+	}
 	return nil
 }
