@@ -41,6 +41,7 @@ type aggResource struct {
 
 type aggMetric struct {
 	sync.RWMutex
+	startTime time.Time
 	metric *metricspb.Metric
 	keyMap map[string]bool // useful for checking if key is dropped or not
 	tsMap  map[string]*metricspb.TimeSeries
@@ -146,10 +147,11 @@ func (ar *aggResource) getOrCreateAggMetric(dropResKeys, dropLabelKeys map[strin
 	aggM, ok = ar.metricMap[labelSig]
 	if !ok {
 		aggM = &aggMetric{
+			startTime: time.Now(),
 			metric: &metricspb.Metric{
 				MetricDescriptor: &metricspb.MetricDescriptor{
-					Name:        metric.MetricDescriptor.Name,
-					Description: metric.MetricDescriptor.Description,
+					Name:        "aggregate/" + metric.MetricDescriptor.Name,
+					Description: "aggregated: " + metric.MetricDescriptor.Description,
 					Unit:        metric.MetricDescriptor.Unit,
 					Type:        metric.MetricDescriptor.Type,
 				},
@@ -176,11 +178,11 @@ func getTsSig(labelValues []*metricspb.LabelValue) string {
 	return strings.Join(values, ",")
 }
 
-func copyTimeSeries(metricType metricspb.MetricDescriptor_Type, ts *metricspb.TimeSeries, labelValues []*metricspb.LabelValue) *metricspb.TimeSeries {
+func (am *aggMetric) copyTimeSeries(metricType metricspb.MetricDescriptor_Type, ts *metricspb.TimeSeries, labelValues []*metricspb.LabelValue) *metricspb.TimeSeries {
 	switch metricType {
 	case metricspb.MetricDescriptor_CUMULATIVE_DOUBLE:
 		newTs := &metricspb.TimeSeries{
-			StartTimestamp: timeToProtoTimestamp(time.Now()),
+			StartTimestamp: timeToProtoTimestamp(am.startTime),
 			LabelValues:    labelValues,
 			Points: []*metricspb.Point{
 				{
@@ -194,7 +196,7 @@ func copyTimeSeries(metricType metricspb.MetricDescriptor_Type, ts *metricspb.Ti
 		return newTs
 	case metricspb.MetricDescriptor_CUMULATIVE_INT64:
 		newTs := &metricspb.TimeSeries{
-			StartTimestamp: timeToProtoTimestamp(time.Now()),
+			StartTimestamp: timeToProtoTimestamp(am.startTime),
 			LabelValues:    labelValues,
 			Points: []*metricspb.Point{
 				{
@@ -228,7 +230,7 @@ func copyTimeSeries(metricType metricspb.MetricDescriptor_Type, ts *metricspb.Ti
 		}
 
 		newTs := &metricspb.TimeSeries{
-			StartTimestamp: timeToProtoTimestamp(time.Now()),
+			StartTimestamp: timeToProtoTimestamp(am.startTime),
 			LabelValues:    labelValues,
 			Points: []*metricspb.Point{
 				{
@@ -259,7 +261,7 @@ func (am *aggMetric) getOrCreateTimeSeries(dropResKeys, dropLabelKeys map[string
 	defer am.Unlock()
 	ts, ok := am.tsMap[sig]
 	if !ok {
-		ts = copyTimeSeries(metric.MetricDescriptor.Type, series, labelValues)
+		ts = am.copyTimeSeries(metric.MetricDescriptor.Type, series, labelValues)
 		am.tsMap[sig] = ts
 	}
 	return ts
@@ -420,7 +422,7 @@ func NewMetricsAdjuster(tsm *timeseriesMap, logger *zap.SugaredLogger) *MetricsA
 // TODO: When there is a large gap between reporting.
 // Metrics that are not aggregated are returned as is.
 func (ma *MetricsAggregator) AggregateMetrics(dropResKeys, dropLabelKeys map[string]bool, res *resourcepb.Resource, metrics []*metricspb.Metric) []*metricspb.Metric {
-	var notAggregated = make([]*metricspb.Metric, 0, len(metrics))
+	var notAggregated = make([]*metricspb.Metric, 0)
 	ma.tsm.Lock()
 	defer ma.tsm.Unlock()
 	for _, metric := range metrics {
