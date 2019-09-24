@@ -192,6 +192,56 @@ func copyTimeSeries(metricType metricspb.MetricDescriptor_Type, ts *metricspb.Ti
 			},
 		}
 		return newTs
+	case metricspb.MetricDescriptor_CUMULATIVE_INT64:
+		newTs := &metricspb.TimeSeries{
+			StartTimestamp: timeToProtoTimestamp(time.Now()),
+			LabelValues: labelValues,
+			Points: []*metricspb.Point{
+				{
+					Timestamp: timeToProtoTimestamp(time.Now()),
+					Value: &metricspb.Point_Int64Value{
+						Int64Value: 0,
+					},
+				},
+			},
+		}
+		return newTs
+	case metricspb.MetricDescriptor_CUMULATIVE_DISTRIBUTION:
+		bounds := ts.Points[0].GetDistributionValue().GetBucketOptions().GetExplicit().GetBounds()
+		boundsCopy := make([]float64, len(bounds))
+		buckets := make([]*metricspb.DistributionValue_Bucket, len(bounds)+1)
+		for i, b := range bounds {
+			boundsCopy[i] = b
+			buckets[i] = &metricspb.DistributionValue_Bucket{
+			}
+		}
+		buckets[len(bounds)] = &metricspb.DistributionValue_Bucket{
+		}
+		dv := &metricspb.DistributionValue{
+			BucketOptions: &metricspb.DistributionValue_BucketOptions{
+				Type: &metricspb.DistributionValue_BucketOptions_Explicit_{
+					Explicit: &metricspb.DistributionValue_BucketOptions_Explicit{
+						Bounds: boundsCopy,
+					},
+				},
+			},
+			Buckets: buckets,
+			// SumOfSquaredDeviation:  // there's no way to compute this value from prometheus data
+		}
+
+		newTs := &metricspb.TimeSeries{
+			StartTimestamp: timeToProtoTimestamp(time.Now()),
+			LabelValues: labelValues,
+			Points: []*metricspb.Point{
+				{
+					Timestamp: timeToProtoTimestamp(time.Now()),
+					Value: &metricspb.Point_DistributionValue{
+						DistributionValue: dv,
+					},
+				},
+			},
+		}
+		return newTs
 	}
 	return nil
 }
@@ -441,8 +491,13 @@ func (ma *MetricsAdjuster) adjustAggTimeSeries(metricType metricspb.MetricDescri
 		currentValue := current.GetPoints()[0].GetDoubleValue()
 		previousValue := tsi.previous.GetPoints()[0].GetDoubleValue()
 		var delta float64
+		// TODO: If a source stops reporting due to a bug or network issue or any issue but
+		// resumes again then there will be a spike. To overcome this, also compare the timestamp.
+		// If the elapsed time since last posting is > reportingInterval then ignore the current
+		// value and start computing delta next time.
 		if currentValue < previousValue {
-			// reset happend
+			// A source restarted and is pushing metrics again. In this case a new value
+			// is added as is because it is delta from the start.
 			delta = currentValue
 		} else {
 			delta = currentValue - previousValue
@@ -454,11 +509,67 @@ func (ma *MetricsAdjuster) adjustAggTimeSeries(metricType metricspb.MetricDescri
 		tsi.aggTs.Points[0].Value = &metricspb.Point_DoubleValue{
 			DoubleValue: aggNewValue,
 		}
+	case metricspb.MetricDescriptor_CUMULATIVE_INT64:
+		currentValue := current.GetPoints()[0].GetInt64Value()
+		previousValue := tsi.previous.GetPoints()[0].GetInt64Value()
+		var delta int64
+		if currentValue < previousValue {
+			delta = currentValue
+		} else {
+			delta = currentValue - previousValue
+		}
+		aggCurrValue := tsi.aggTs.GetPoints()[0].GetInt64Value()
+		aggNewValue := aggCurrValue + delta
+
+		tsi.aggTs.Points[0].Timestamp = timeToProtoTimestamp(time.Now())
+		tsi.aggTs.Points[0].Value = &metricspb.Point_Int64Value{
+			Int64Value: aggNewValue,
+		}
 	case metricspb.MetricDescriptor_CUMULATIVE_DISTRIBUTION:
+		curr := current.GetPoints()[0].GetDistributionValue()
+		prev := tsi.previous.GetPoints()[0].GetDistributionValue()
+		var deltaSum float64
+		var deltaCount int64
+		resetDetected := false
+		if curr.Sum < prev.Sum || curr.Count < prev.Count {
+			deltaSum = curr.Sum
+			deltaCount = curr.Count
+			resetDetected = true
+		} else {
+			deltaSum = curr.Sum - prev.Sum
+			deltaCount = curr.Count - prev.Count
+		}
+		agg := tsi.aggTs.GetPoints()[0].GetDistributionValue()
+		agg.Count += deltaCount
+		agg.Sum += deltaSum
+		ma.adjustBuckets(agg, curr, prev, resetDetected)
+		tsi.aggTs.Points[0].Timestamp = timeToProtoTimestamp(time.Now())
 	case metricspb.MetricDescriptor_SUMMARY:
 	default:
 		// this shouldn't happen
 		ma.logger.Infof("adjust unexpect point type %v, skipping ...", metricType.String())
+	}
+}
+
+func (ma *MetricsAdjuster) adjustBuckets(agg, curr, prev *metricspb.DistributionValue, resetDetected bool) {
+	if len(curr.Buckets) != len(agg.Buckets) ||
+		len(prev.Buckets) != len(agg.Buckets) {
+		// TODO: Error count
+		ma.logger.Infof("Buckets lengths unequal agg:%v\n, curr:%v\n, prev%v\n", agg, curr, prev)
+		return
+	}
+	ma.logger.Infof("Buckets lengths unequal agg:%v\n, curr:%v\n, prev%v\n", agg, curr, prev)
+	if resetDetected {
+		for i, cb := range curr.Buckets {
+			agg.Buckets[i].Count += cb.Count
+			agg.Buckets[i].Exemplar = cb.Exemplar
+		}
+	} else {
+		for i, cb := range curr.Buckets {
+			fmt.Printf("Bucket %d\n", i)
+			agg.Buckets[i].Count += curr.Buckets[i].Count - prev.Buckets[i].Count
+			agg.Buckets[i].Exemplar = cb.Exemplar
+		}
 	}
 }
 

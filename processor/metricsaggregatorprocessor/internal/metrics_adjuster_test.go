@@ -34,12 +34,28 @@ import (
 func Test_CumulativeDouble(t *testing.T) {
 	script := []*metricsAdjusterTest{
 		{
-			description: "Drop Container Key Name",
+			description: "Drop Container Key Name for Cumulative Double",
 			dropResKeyMap: map[string]bool{
 				resourcekeys.ContainerKeyName: true,
 			},
 			dropLabelKeyMap: map[string]bool{},
 			inDir: "CumulativeDouble",
+		},
+		{
+			description: "Drop Container Key Name for Cumulative Int64",
+			dropResKeyMap: map[string]bool{
+				resourcekeys.ContainerKeyName: true,
+			},
+			dropLabelKeyMap: map[string]bool{},
+			inDir: "CumulativeInt64",
+		},
+		{
+			description: "Drop Container Key Name for Cumulative Distribution",
+			dropResKeyMap: map[string]bool{
+				resourcekeys.ContainerKeyName: true,
+			},
+			dropLabelKeyMap: map[string]bool{},
+			inDir: "CumulativeDistribution",
 		},
 	}
 	runScript(t, NewJobsMap(time.Duration(time.Minute)).Get("job", "0"), script)
@@ -93,9 +109,9 @@ type metricsAdjusterTest struct {
 func runScript(t *testing.T, tsm *timeseriesMap, script []*metricsAdjusterTest) {
 	l, _ := zap.NewProduction()
 	defer l.Sync() // flushes buffer, if any
-	ma := NewMetricsAdjuster(tsm, l.Sugar())
 
 	for _, test := range script {
+		ma := NewMetricsAdjuster(tsm, l.Sugar())
 		readTestCaseFromFiles(t, test)
 		ma.AdjustMetrics(test.dropResKeyMap, test.dropLabelKeyMap, nil, test.inMetrics)
 		gotMetrics := ma.ExportTimeSeries()
