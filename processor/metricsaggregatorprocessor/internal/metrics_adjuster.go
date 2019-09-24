@@ -30,37 +30,7 @@ import (
 
 // Notes on garbage collection (gc):
 //
-// Job-level gc:
-// The Prometheus receiver will likely execute in a long running service whose lifetime may exceed
-// the lifetimes of many of the jobs that it is collecting from. In order to keep the JobsMap from
-// leaking memory for entries of no-longer existing jobs, the JobsMap needs to remove entries that
-// haven't been accessed for a long period of time.
-//
-// Timeseries-level gc:
-// Some jobs that the Prometheus receiver is collecting from may export timeseries based on inMetrics
-// from other jobs (e.g. cAdvisor). In order to keep the timeseriesMap from leaking memory for entries
-// of no-longer existing jobs, the timeseriesMap for each job needs to remove entries that haven't
-// been accessed for a long period of time.
-//
-// The gc strategy uses a standard mark-and-sweep approach - each time a timeseriesMap is accessed,
-// it is marked. Similarly, each time a timeseriesinfo is accessed, it is also marked.
-//
-// At the end of each JobsMap.get(), if the last time the JobsMap was gc'd exceeds the 'gcInterval',
-// the JobsMap is locked and any timeseriesMaps that are unmarked are removed from the JobsMap
-// otherwise the timeseriesMap is gc'd
-//
-// The gc for the timeseriesMap is straightforward - the map is locked and, for each timeseriesinfo
-// in the map, if it has not been marked, it is removed otherwise it is unmarked.
-//
-// Alternative Strategies
-// 1. If the job-level gc doesn't run often enough, or runs too often, a separate go routine can
-//    be spawned at JobMap creation time that gc's at periodic intervals. This approach potentially
-//    adds more contention and latency to each scrape so the current approach is used. Note that
-//    the go routine will need to be cancelled upon StopMetricsReception().
-// 2. If the gc of each timeseriesMap during the gc of the JobsMap causes too much contention,
-//    the gc of timeseriesMaps can be moved to the end of MetricsAdjuster().AdjustMetrics(). This
-//    approach requires adding 'lastGC' Time and (potentially) a gcInterval duration to
-//    timeseriesMap so the current approach is used instead.
+// This is mainly borrowed from metric_adjuster in prometheusreceiver
 
 type aggResource struct {
 	sync.RWMutex
@@ -76,7 +46,10 @@ type aggMetric struct {
 	tsMap  map[string]*metricspb.TimeSeries
 }
 
-var aggResMap = map[string]*aggResource{}
+type aggResourceMap struct {
+	sync.RWMutex
+	resMap map[string]*aggResource
+}
 
 func getResSignature(resKeys []string, metric *metricspb.Metric) string {
 	labelValues := make([]string, 0, len(resKeys))
@@ -101,7 +74,7 @@ func getLabelKeySignature(labelKeys []string, metric *metricspb.Metric) string {
 
 }
 
-func getOrCreateAggRes(dropResKeys, dropLabelKeys map[string]bool, metric *metricspb.Metric) *aggResource {
+func (arm *aggResourceMap) getOrCreateAggRes(dropResKeys, dropLabelKeys map[string]bool, metric *metricspb.Metric) *aggResource {
 	var resKeys []string
 	var aggRes *aggResource
 	if metric.Resource != nil{
@@ -116,7 +89,11 @@ func getOrCreateAggRes(dropResKeys, dropLabelKeys map[string]bool, metric *metri
 		}
 		resSig := getResSignature(resKeys, metric)
 		var ok bool
-		aggRes, ok = aggResMap[resSig]
+
+		// TODO(rghetia) : add efficient RLock()
+		arm.Lock()
+		defer arm.Unlock()
+		aggRes, ok = arm.resMap[resSig]
 		if !ok {
 			aggRes = &aggResource{
 				res: &resourcepb.Resource{
@@ -128,25 +105,25 @@ func getOrCreateAggRes(dropResKeys, dropLabelKeys map[string]bool, metric *metri
 			for _, k := range resKeys {
 				aggRes.res.Labels[k] = metric.Resource.Labels[k]
 			}
-			aggResMap[resSig] = aggRes
+			arm.resMap[resSig] = aggRes
 		}
 	} else {
-		aggRes, ok := aggResMap[""]
+		arm.Lock()
+		defer arm.Unlock()
+		aggRes, ok := arm.resMap[""]
 		if !ok {
 			aggRes = &aggResource{
 				metricMap: map[string]*aggMetric{},
 			}
-			aggResMap[""] = aggRes
+			arm.resMap[""] = aggRes
 		}
 	}
 	return aggRes
 }
 
-func getOrCreateAggMetric(dropResKeys, dropLabelKeys map[string]bool, metric *metricspb.Metric) *aggMetric {
+func (ar *aggResource) getOrCreateAggMetric(dropResKeys, dropLabelKeys map[string]bool, metric *metricspb.Metric) *aggMetric {
 	var labelKeys []string
 	var aggM *aggMetric
-
-	aggRes := getOrCreateAggRes(dropResKeys, dropLabelKeys, metric)
 
 	lKeys := metric.GetMetricDescriptor().GetLabelKeys()
 	if len(lKeys) > 0 {
@@ -163,7 +140,10 @@ func getOrCreateAggMetric(dropResKeys, dropLabelKeys map[string]bool, metric *me
 
 	labelSig := getLabelKeySignature(labelKeys, metric)
 	var ok bool
-	aggM, ok = aggRes.metricMap[labelSig]
+
+	ar.Lock()
+	defer ar.Unlock()
+	aggM, ok = ar.metricMap[labelSig]
 	if !ok {
 		aggM = &aggMetric{
 			metric: &metricspb.Metric{
@@ -182,14 +162,14 @@ func getOrCreateAggMetric(dropResKeys, dropLabelKeys map[string]bool, metric *me
 			aggM.metric.MetricDescriptor.LabelKeys = append(aggM.metric.MetricDescriptor.LabelKeys, &metricspb.LabelKey{Key: k})
 			aggM.keyMap[k] = true
 		}
-		aggRes.metricMap[labelSig] = aggM
+		ar.metricMap[labelSig] = aggM
 	}
 
 	return aggM
 }
 
 func getTsSig(labelValues []*metricspb.LabelValue) string {
-	var values []string = make([]string, 0, len(labelValues))
+	var values = make([]string, 0, len(labelValues))
 	for _, lv := range labelValues {
 		values = append(values, lv.Value)
 	}
@@ -216,21 +196,23 @@ func copyTimeSeries(metricType metricspb.MetricDescriptor_Type, ts *metricspb.Ti
 	return nil
 }
 
-func getOrCreateTimeSeries(dropResKeys, dropLabelKeys map[string]bool, metric *metricspb.Metric, series *metricspb.TimeSeries) *metricspb.TimeSeries {
+func (am *aggMetric) getOrCreateTimeSeries(dropResKeys, dropLabelKeys map[string]bool, metric *metricspb.Metric, series *metricspb.TimeSeries) *metricspb.TimeSeries {
 	var ts *metricspb.TimeSeries
-	aggM := getOrCreateAggMetric(dropResKeys, dropLabelKeys, metric)
-	var labelValues = make([]*metricspb.LabelValue, 0, len(aggM.keyMap))
+	var labelValues = make([]*metricspb.LabelValue, 0, len(am.keyMap))
 
 	for i, k := range metric.MetricDescriptor.LabelKeys {
-		if _, ok := aggM.keyMap[k.Key] ; ok {
+		if _, ok := am.keyMap[k.Key] ; ok {
 			labelValues = append(labelValues, series.LabelValues[i])
 		}
 	}
 	sig := getTsSig(labelValues)
-	ts, ok := aggM.tsMap[sig]
+
+	am.Lock()
+	defer am.Unlock()
+	ts, ok := am.tsMap[sig]
 	if !ok {
 		ts = copyTimeSeries(metric.MetricDescriptor.Type, series, labelValues)
-		aggM.tsMap[sig] = ts
+		am.tsMap[sig] = ts
 	}
 	return ts
 }
@@ -370,6 +352,7 @@ func (jm *JobsMap) Get(job, instance string) *timeseriesMap {
 // the initial points.
 type MetricsAdjuster struct {
 	tsm    *timeseriesMap
+	asm    *aggResourceMap
 	logger *zap.SugaredLogger
 }
 
@@ -378,6 +361,9 @@ func NewMetricsAdjuster(tsm *timeseriesMap, logger *zap.SugaredLogger) *MetricsA
 	return &MetricsAdjuster{
 		tsm:    tsm,
 		logger: logger,
+		asm: &aggResourceMap{
+			resMap: map[string]*aggResource{},
+		},
 	}
 }
 
@@ -425,7 +411,10 @@ func (ma *MetricsAdjuster) adjustMetricTimeseries(dropResKeys, dropLabelKeys map
 	for _, current := range metric.GetTimeseries() {
 		tsi := ma.tsm.get(metric, metric.Resource, current.GetLabelValues())
 		if tsi.previous == nil {
-			tsi.aggTs = getOrCreateTimeSeries(dropResKeys, dropLabelKeys, metric, current)
+			aggRes := ma.asm.getOrCreateAggRes(dropResKeys, dropLabelKeys, metric)
+			aggM := aggRes.getOrCreateAggMetric(dropResKeys, dropLabelKeys, metric)
+			tsi.aggTs = aggM.getOrCreateTimeSeries(dropResKeys, dropLabelKeys, metric, current)
+
 			// initial timeseries
 			tsi.previous = current
 		} else {
@@ -475,18 +464,24 @@ func (ma *MetricsAdjuster) adjustAggTimeSeries(metricType metricspb.MetricDescri
 
 func (ma *MetricsAdjuster) ExportTimeSeries() []*metricspb.Metric {
 	metrics := make([]*metricspb.Metric, 0)
-	for _, resV := range aggResMap {
+	ma.asm.Lock()
+	defer ma.asm.Unlock()
+	for _, resV := range ma.asm.resMap {
+		resV.Lock()
 		for _, metricV := range resV.metricMap {
 			metric := &metricspb.Metric{
 				MetricDescriptor: metricV.metric.MetricDescriptor,
 				Resource: resV.res,
 				Timeseries: []*metricspb.TimeSeries{},
 			}
+			metricV.Lock()
 			for _, tsV := range metricV.tsMap {
 				metric.Timeseries = append(metric.Timeseries, tsV)
 			}
 			metrics = append(metrics, metric)
+			metricV.Unlock()
 		}
+		resV.Unlock()
 	}
 	return metrics
 }
