@@ -30,7 +30,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func Test_CumulativeDouble(t *testing.T) {
+func Test_DropResource(t *testing.T) {
 	script := []*metricsAdjusterTest{
 		{
 			description: "Drop Container Key Name for Cumulative Double",
@@ -55,6 +55,36 @@ func Test_CumulativeDouble(t *testing.T) {
 			},
 			dropLabelKeyMap: map[string]bool{},
 			inDir:           "CumulativeDistribution",
+		},
+	}
+	runScript(t, NewJobsMap(time.Duration(time.Minute)).Get("job", "0"), script)
+}
+
+func Test_DropLabel(t *testing.T) {
+	script := []*metricsAdjusterTest{
+		{
+			description:   "Drop Empty label for Cumulative Double",
+			dropResKeyMap: map[string]bool{},
+			dropLabelKeyMap: map[string]bool{
+				"operation_type": true,
+			},
+			inDir: "CumulativeDoubleDropLabel",
+		},
+		{
+			description:   "Drop Empty label  for Cumulative Int64",
+			dropResKeyMap: map[string]bool{},
+			dropLabelKeyMap: map[string]bool{
+				"operation_type": true,
+			},
+			inDir: "CumulativeInt64DropLabel",
+		},
+		{
+			description:   "Drop Empty label for Cumulative Distribution",
+			dropResKeyMap: map[string]bool{},
+			dropLabelKeyMap: map[string]bool{
+				"operation_type": true,
+			},
+			inDir: "CumulativeDistributionDropLabel",
 		},
 	}
 	runScript(t, NewJobsMap(time.Duration(time.Minute)).Get("job", "0"), script)

@@ -419,7 +419,7 @@ func NewMetricsAdjuster(tsm *timeseriesMap, logger *zap.SugaredLogger) *MetricsA
 // not aggregated. If the timeseries resets then it is aggregated with new value treated as delta.
 // TODO: When there is a large gap between reporting.
 // Metrics that are not aggregated are returned as is.
-func (ma *MetricsAggregator) AggregateMetrics(dropResKeys, dropLabelKeys map[string]bool, res *resourcepb.Resource, metrics []*metricspb.Metric) []*metricspb.Metric{
+func (ma *MetricsAggregator) AggregateMetrics(dropResKeys, dropLabelKeys map[string]bool, res *resourcepb.Resource, metrics []*metricspb.Metric) []*metricspb.Metric {
 	var notAggregated = make([]*metricspb.Metric, 0, len(metrics))
 	ma.tsm.Lock()
 	defer ma.tsm.Unlock()
