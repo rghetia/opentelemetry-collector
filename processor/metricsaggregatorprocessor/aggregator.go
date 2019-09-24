@@ -16,18 +16,16 @@ package metricsaggregatorprocessor
 
 import (
 	"context"
-	"fmt"
-	"github.com/open-telemetry/opentelemetry-service/processor/metricsaggregatorprocessor/internal"
-	"strings"
+	"os"
+	"sync"
 	"time"
 
 	"go.uber.org/zap"
 
-	commonpb "github.com/census-instrumentation/opencensus-proto/gen-go/agent/common/v1"
-	metricspb "github.com/census-instrumentation/opencensus-proto/gen-go/metrics/v1"
-	resourcepb "github.com/census-instrumentation/opencensus-proto/gen-go/resource/v1"
 	"github.com/open-telemetry/opentelemetry-service/consumer"
 	"github.com/open-telemetry/opentelemetry-service/consumer/consumerdata"
+	commonpb "github.com/census-instrumentation/opencensus-proto/gen-go/agent/common/v1"
+	"github.com/open-telemetry/opentelemetry-service/processor/metricsaggregatorprocessor/internal"
 )
 
 const (
@@ -39,24 +37,36 @@ const (
 // aggregator implements consumer.MetricsConsumer
 type aggregator struct {
 	jobsMap *internal.JobsMap
+	adjuster *internal.MetricsAdjuster
 	sender consumer.MetricsConsumer
 	name   string
-	logger *zap.Logger
+	logger *zap.SugaredLogger
+	node   *commonpb.Node
 
-	reportingInterval time.Duration
-	dropResourceKeys  []string
-	dropLabelKeys     []string
+	reportingInterval  time.Duration
+	dropResourceKeys   []string
+	dropLabelKeys      []string
+	dropResourceKeyMap map[string]bool
+	dropLabelKeyMap    map[string]bool
+	stopCh                   chan struct{}
+	stopOnce                 sync.Once
 }
 
 var _ consumer.MetricsConsumer = (*aggregator)(nil)
 
 // NewAggregator creates a new aggregator that batches spans by node and resource
-func NewAggregator(name string, logger *zap.Logger, sender consumer.MetricsConsumer, opts ...Option) consumer.MetricsConsumer {
+func NewAggregator(name string, logger *zap.SugaredLogger, sender consumer.MetricsConsumer, opts ...Option) consumer.MetricsConsumer {
 	// Init with defaults
 	b := &aggregator{
 		name:   name,
 		sender: sender,
 		logger: logger,
+		node: &commonpb.Node{
+			Identifier: &commonpb.ProcessIdentifier{
+				Pid: uint32(os.Getpid()),
+				HostName: func() string { h, _ := os.Hostname() ; return h}(),
+			},
+		},
 
 		reportingInterval: defaultReportingInterval,
 	}
@@ -67,29 +77,42 @@ func NewAggregator(name string, logger *zap.Logger, sender consumer.MetricsConsu
 	}
 
 	b.jobsMap = internal.NewJobsMap(time.Duration(2 * time.Minute))
+	b.adjuster = internal.NewMetricsAdjuster(b.jobsMap.Get("aggregator",  "1"), b.logger)
+
+	b.dropResourceKeyMap = make(map[string]bool, len(b.dropResourceKeys))
+	for _, k := range b.dropResourceKeys {
+		b.dropResourceKeyMap[k] = true
+	}
+
+	b.dropLabelKeyMap = make(map[string]bool, len(b.dropLabelKeys))
+	for _, k := range b.dropLabelKeys {
+		b.dropLabelKeyMap[k] = true
+	}
+
 	//Start timer to export metrics
+	ticker := time.NewTicker(60 * time.Second)
+	go func(ctx context.Context) {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-b.stopCh:
+				return
+			case <-ticker.C:
+				metrics := b.adjuster.ExportTimeSeries()
+				md := consumerdata.MetricsData{
+					Metrics: metrics,
+					Node: b.node,
+				}
+				sender.ConsumeMetricsData(ctx, md)
+			}
+		}
+	}(context.Background())
 	return b
 }
 
 // ConsumeTraceData implements aggregator as a SpanProcessor and takes the provided spans and adds them to
 // batches
 func (b *aggregator) ConsumeMetricsData(ctx context.Context, td consumerdata.MetricsData) error {
-	for _, m := range td.Metrics {
-		for _, ts := range m.Timeseries {
-			b.processTimeSeries(td.Resource, m, ts)
-		}
-	}
+	b.adjuster.AdjustMetrics(b.dropResourceKeyMap, b.dropLabelKeyMap, td.Resource, td.Metrics)
 	return nil
-}
-
-func (b *aggregator) processTimeSeries(res *resourcepb.Resource, metric *metricspb.Metric, ts *metricspb.TimeSeries) {
-	sig := getSigWithResAndLabels(res, metric, ts)
-
-	// Adjust and Get Updated TS
-
-	// For
-	//
-
-	newResKeys := []string{}
-	newResLab
 }

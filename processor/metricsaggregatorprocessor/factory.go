@@ -80,5 +80,5 @@ func (f *Factory) CreateMetricsProcessor(
 		aggregatorOptions = append(aggregatorOptions, WithDropLabelKeys(cfg.DropLabelKeys))
 	}
 
-	return NewAggregator(cfg.NameVal, logger, nextConsumer, aggregatorOptions...), nil
+	return NewAggregator(cfg.NameVal, logger.Sugar(), nextConsumer, aggregatorOptions...), nil
 }

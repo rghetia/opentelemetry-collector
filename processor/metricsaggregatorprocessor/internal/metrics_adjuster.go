@@ -16,7 +16,7 @@ package internal
 
 import (
 	"fmt"
-	"google.golang.org/genproto/googleapis/api/metric"
+	"github.com/golang/protobuf/ptypes/timestamp"
 	"sort"
 	"strings"
 	"sync"
@@ -25,7 +25,6 @@ import (
 	commonpb "github.com/census-instrumentation/opencensus-proto/gen-go/agent/common/v1"
 	metricspb "github.com/census-instrumentation/opencensus-proto/gen-go/metrics/v1"
 	resourcepb "github.com/census-instrumentation/opencensus-proto/gen-go/resource/v1"
-	"github.com/golang/protobuf/ptypes/wrappers"
 	"go.uber.org/zap"
 )
 
@@ -38,7 +37,7 @@ import (
 // haven't been accessed for a long period of time.
 //
 // Timeseries-level gc:
-// Some jobs that the Prometheus receiver is collecting from may export timeseries based on metrics
+// Some jobs that the Prometheus receiver is collecting from may export timeseries based on inMetrics
 // from other jobs (e.g. cAdvisor). In order to keep the timeseriesMap from leaking memory for entries
 // of no-longer existing jobs, the timeseriesMap for each job needs to remove entries that haven't
 // been accessed for a long period of time.
@@ -64,12 +63,14 @@ import (
 //    timeseriesMap so the current approach is used instead.
 
 type aggResource struct {
+	sync.RWMutex
 	res       *resourcepb.Resource
 	node      *commonpb.Node
 	metricMap map[string]*aggMetric
 }
 
 type aggMetric struct {
+	sync.RWMutex
 	metric *metricspb.Metric
 	keyMap map[string]bool // useful for checking if key is dropped or not
 	tsMap  map[string]*metricspb.TimeSeries
@@ -82,6 +83,9 @@ func getResSignature(resKeys []string, metric *metricspb.Metric) string {
 	for _, k := range resKeys {
 		labelValues = append(labelValues, metric.Resource.Labels[k])
 	}
+	// TODO (rghetia): Check if sort is necessary?
+	sort.Strings(labelValues)
+
 	return fmt.Sprintf("%s,%s", metric.Resource.Type, strings.Join(labelValues, ","))
 
 }
@@ -91,6 +95,8 @@ func getLabelKeySignature(labelKeys []string, metric *metricspb.Metric) string {
 	for _, k := range labelKeys {
 		labelValues = append(labelValues, metric.Resource.Labels[k])
 	}
+	// TODO (rghetia): Check if sort is necessary?
+	sort.Strings(labelValues)
 	return fmt.Sprintf("%s,%s", metric.GetMetricDescriptor().GetName(), strings.Join(labelValues, ","))
 
 }
@@ -117,6 +123,7 @@ func getOrCreateAggRes(dropResKeys, dropLabelKeys map[string]bool, metric *metri
 					Type: metric.Resource.Type,
 					Labels: make(map[string]string, len(resKeys)),
 				},
+				metricMap: map[string]*aggMetric{},
 			}
 			for _, k := range resKeys {
 				aggRes.res.Labels[k] = metric.Resource.Labels[k]
@@ -127,6 +134,7 @@ func getOrCreateAggRes(dropResKeys, dropLabelKeys map[string]bool, metric *metri
 		aggRes, ok := aggResMap[""]
 		if !ok {
 			aggRes = &aggResource{
+				metricMap: map[string]*aggMetric{},
 			}
 			aggResMap[""] = aggRes
 		}
@@ -137,10 +145,6 @@ func getOrCreateAggRes(dropResKeys, dropLabelKeys map[string]bool, metric *metri
 func getOrCreateAggMetric(dropResKeys, dropLabelKeys map[string]bool, metric *metricspb.Metric) *aggMetric {
 	var labelKeys []string
 	var aggM *aggMetric
-
-	// GetOrCreate Resource
-	// GetOrCreate Metrics
-	// GetOrCreate TimeSeries
 
 	aggRes := getOrCreateAggRes(dropResKeys, dropLabelKeys, metric)
 
@@ -156,6 +160,7 @@ func getOrCreateAggMetric(dropResKeys, dropLabelKeys map[string]bool, metric *me
 			sort.Strings(labelKeys)
 		}
 	}
+
 	labelSig := getLabelKeySignature(labelKeys, metric)
 	var ok bool
 	aggM, ok = aggRes.metricMap[labelSig]
@@ -165,6 +170,8 @@ func getOrCreateAggMetric(dropResKeys, dropLabelKeys map[string]bool, metric *me
 				MetricDescriptor: &metricspb.MetricDescriptor{
 					Name:        metric.MetricDescriptor.Name,
 					Description: metric.MetricDescriptor.Description,
+					Unit: 		 metric.MetricDescriptor.Unit,
+					Type:        metric.MetricDescriptor.Type,
 				},
 				Timeseries: []*metricspb.TimeSeries{},
 			},
@@ -177,6 +184,7 @@ func getOrCreateAggMetric(dropResKeys, dropLabelKeys map[string]bool, metric *me
 		}
 		aggRes.metricMap[labelSig] = aggM
 	}
+
 	return aggM
 }
 
@@ -188,8 +196,24 @@ func getTsSig(labelValues []*metricspb.LabelValue) string {
 	return strings.Join(values, ",")
 }
 
-func copyTimeSeries(ts *metricspb.TimeSeries, labelValues []*metricspb.LabelValue) *metricspb.TimeSeries {
-	return ts
+func copyTimeSeries(metricType metricspb.MetricDescriptor_Type, ts *metricspb.TimeSeries, labelValues []*metricspb.LabelValue) *metricspb.TimeSeries {
+	switch metricType {
+	case metricspb.MetricDescriptor_CUMULATIVE_DOUBLE:
+		newTs := &metricspb.TimeSeries{
+			StartTimestamp: timeToProtoTimestamp(time.Now()),
+			LabelValues: labelValues,
+			Points: []*metricspb.Point{
+				{
+					Timestamp: timeToProtoTimestamp(time.Now()),
+					Value: &metricspb.Point_DoubleValue{
+						DoubleValue: 0.0,
+					},
+				},
+			},
+		}
+		return newTs
+	}
+	return nil
 }
 
 func getOrCreateTimeSeries(dropResKeys, dropLabelKeys map[string]bool, metric *metricspb.Metric, series *metricspb.TimeSeries) *metricspb.TimeSeries {
@@ -205,7 +229,8 @@ func getOrCreateTimeSeries(dropResKeys, dropLabelKeys map[string]bool, metric *m
 	sig := getTsSig(labelValues)
 	ts, ok := aggM.tsMap[sig]
 	if !ok {
-		ts = copyTimeSeries(series, labelValues)
+		ts = copyTimeSeries(metric.MetricDescriptor.Type, series, labelValues)
+		aggM.tsMap[sig] = ts
 	}
 	return ts
 }
@@ -214,7 +239,6 @@ func getOrCreateTimeSeries(dropResKeys, dropLabelKeys map[string]bool, metric *m
 // resets.
 type timeseriesinfo struct {
 	mark     bool
-	initial  *metricspb.TimeSeries
 	previous *metricspb.TimeSeries
 	aggTs    *metricspb.TimeSeries
 }
@@ -234,7 +258,8 @@ func (tsm *timeseriesMap) get(
 	sig := getSigWithResAndLabels(name, res, values)
 	tsi, ok := tsm.tsiMap[sig]
 	if !ok {
-		tsi = &timeseriesinfo{}
+		tsi = &timeseriesinfo{
+		}
 		tsm.tsiMap[sig] = tsi
 	}
 	tsm.mark = true
@@ -276,17 +301,7 @@ func getSigWithResAndLabels(name string, res *resourcepb.Resource, values []*met
 			labelValues = append(labelValues, label.GetValue())
 		}
 	}
-	return fmt.Sprintf("%s,%s", name, strings.Join(labelValues, ","))
-}
-
-// Create a unique timeseries signature consisting of the metric name and label values.
-func getTimeseriesSignature(name string, values []*metricspb.LabelValue) string {
-	labelValues := make([]string, 0, len(values))
-	for _, label := range values {
-		if label.GetValue() != "" {
-			labelValues = append(labelValues, label.GetValue())
-		}
-	}
+	sort.Strings(labelValues)
 	return fmt.Sprintf("%s,%s", name, strings.Join(labelValues, ","))
 }
 
@@ -330,7 +345,7 @@ func (jm *JobsMap) maybeGC() {
 	}
 }
 
-func (jm *JobsMap) get(job, instance string) *timeseriesMap {
+func (jm *JobsMap) Get(job, instance string) *timeseriesMap {
 	sig := job + ":" + instance
 	jm.RLock()
 	tsm, ok := jm.jobsMap[sig]
@@ -350,8 +365,8 @@ func (jm *JobsMap) get(job, instance string) *timeseriesMap {
 	return tsm2
 }
 
-// MetricsAdjuster takes a map from a metric instance to the initial point in the metrics instance
-// and provides AdjustMetrics, which takes a sequence of metrics and adjust their values based on
+// MetricsAdjuster takes a map from a metric instance to the initial point in the inMetrics instance
+// and provides AdjustMetrics, which takes a sequence of inMetrics and adjust their values based on
 // the initial points.
 type MetricsAdjuster struct {
 	tsm    *timeseriesMap
@@ -366,10 +381,10 @@ func NewMetricsAdjuster(tsm *timeseriesMap, logger *zap.SugaredLogger) *MetricsA
 	}
 }
 
-// AdjustMetrics takes a sequence of metrics and adjust their values based on the initial and
+// AdjustMetrics takes a sequence of inMetrics and adjust their values based on the initial and
 // previous points in the timeseriesMap. If the metric is the first point in the timeseries, or the
 // timeseries has been reset, it is removed from the sequence and added to the the timeseriesMap.
-func (ma *MetricsAdjuster) AdjustMetrics(dropResKeys, dropLabelKeys map[string]bool, res *resourcepb.Resource, metrics []*metricspb.Metric) []*metricspb.Metric {
+func (ma *MetricsAdjuster) AdjustMetrics(dropResKeys, dropLabelKeys map[string]bool, res *resourcepb.Resource, metrics []*metricspb.Metric) {
 	var adjusted = make([]*metricspb.Metric, 0, len(metrics))
 	ma.tsm.Lock()
 	defer ma.tsm.Unlock()
@@ -382,13 +397,12 @@ func (ma *MetricsAdjuster) AdjustMetrics(dropResKeys, dropLabelKeys map[string]b
 			adjusted = append(adjusted, metric)
 		}
 	}
-	return adjusted
 }
 
 // Returns true if at least one of the metric's timeseries was adjusted and false if all of the
 // timeseries are an initial occurrence or a reset.
 //
-// Types of metrics returned supported by prometheus:
+// Types of inMetrics returned supported by prometheus:
 // - MetricDescriptor_GAUGE_DOUBLE
 // - MetricDescriptor_GAUGE_DISTRIBUTION
 // - MetricDescriptor_CUMULATIVE_DOUBLE
@@ -410,125 +424,69 @@ func (ma *MetricsAdjuster) adjustMetricTimeseries(dropResKeys, dropLabelKeys map
 	filtered := make([]*metricspb.TimeSeries, 0, len(metric.GetTimeseries()))
 	for _, current := range metric.GetTimeseries() {
 		tsi := ma.tsm.get(metric, metric.Resource, current.GetLabelValues())
-		if tsi.initial == nil {
+		if tsi.previous == nil {
 			tsi.aggTs = getOrCreateTimeSeries(dropResKeys, dropLabelKeys, metric, current)
 			// initial timeseries
-			tsi.initial = current
 			tsi.previous = current
-
 		} else {
-			if ma.adjustTimeseries(metric.MetricDescriptor.Type, current, tsi.initial,
-				tsi.previous) {
-				tsi.previous = current
-				filtered = append(filtered, current)
-			} else {
-				// reset timeseries
-				tsi.initial = current
-				tsi.previous = current
-			}
+			ma.adjustAggTimeSeries(metric.MetricDescriptor.Type, tsi, current)
+			tsi.previous = current
 		}
 	}
 	metric.Timeseries = filtered
 	return len(filtered) > 0
 }
 
-// Returns true if 'current' was adjusted and false if 'current' is an the initial occurrence or a
-// reset of the timeseries.
-func (ma *MetricsAdjuster) adjustTimeseries(metricType metricspb.MetricDescriptor_Type,
-	current, initial, previous *metricspb.TimeSeries) bool {
-	if !ma.adjustPoints(
-		metricType, current.GetPoints(), initial.GetPoints(), previous.GetPoints()) {
-		return false
+func timeToProtoTimestamp(t time.Time) *timestamp.Timestamp {
+	unixNano := t.UnixNano()
+	return &timestamp.Timestamp{
+		Seconds: int64(unixNano / 1e9),
+		Nanos:   int32(unixNano % 1e9),
 	}
-	current.StartTimestamp = initial.StartTimestamp
-	return true
 }
 
-func (ma *MetricsAdjuster) adjustPoints(metricType metricspb.MetricDescriptor_Type,
-	current, initial, previous []*metricspb.Point) bool {
-	if len(current) != 1 || len(initial) != 1 || len(current) != 1 {
-		ma.logger.Infof(
-			"len(current): %v, len(initial): %v, len(previous): %v should all be 1",
-			len(current), len(initial), len(previous))
-		return true
-	}
-	return ma.adjustPoint(metricType, current[0], initial[0], previous[0])
-}
-
-// Note: There is an important, subtle point here. When a new timeseries or a reset is detected,
-// current and initial are the same object. When initial == previous, the previous value/count/sum
-// are all the initial value. When initial != previous, the previous value/count/sum has been
-// adjusted wrt the initial value so both they must be combined to find the actual previous
-// value/count/sum. This happens because the timeseries are updated in-place - if new copies of the
-// timeseries were created instead, previous could be used directly but this would mean reallocating
-// all of the metrics.
-func (ma *MetricsAdjuster) adjustPoint(metricType metricspb.MetricDescriptor_Type,
-	current, initial, previous *metricspb.Point) bool {
+func (ma *MetricsAdjuster) adjustAggTimeSeries(metricType metricspb.MetricDescriptor_Type,
+	tsi *timeseriesinfo, current *metricspb.TimeSeries) {
 	switch metricType {
 	case metricspb.MetricDescriptor_CUMULATIVE_DOUBLE:
-		currentValue := current.GetDoubleValue()
-		initialValue := initial.GetDoubleValue()
-		previousValue := initialValue
-		if initial != previous {
-			previousValue += previous.GetDoubleValue()
-		}
+		currentValue := current.GetPoints()[0].GetDoubleValue()
+		previousValue := tsi.previous.GetPoints()[0].GetDoubleValue()
+		var delta float64
 		if currentValue < previousValue {
-			// reset detected
-			return false
+			// reset happend
+			delta = currentValue
+		} else {
+			delta = currentValue - previousValue
 		}
-		current.Value =
-			&metricspb.Point_DoubleValue{DoubleValue: currentValue - initialValue}
+		aggCurrValue := tsi.aggTs.GetPoints()[0].GetDoubleValue()
+		aggNewValue := aggCurrValue + delta
+
+		tsi.aggTs.Points[0].Timestamp = timeToProtoTimestamp(time.Now())
+		tsi.aggTs.Points[0].Value = &metricspb.Point_DoubleValue{
+			DoubleValue: aggNewValue,
+		}
 	case metricspb.MetricDescriptor_CUMULATIVE_DISTRIBUTION:
-		// note: sum of squared deviation not currently supported
-		currentDist := current.GetDistributionValue()
-		initialDist := initial.GetDistributionValue()
-		previousCount := initialDist.Count
-		previousSum := initialDist.Sum
-		if initial != previous {
-			previousCount += previous.GetDistributionValue().Count
-			previousSum += previous.GetDistributionValue().Sum
-		}
-		if currentDist.Count < previousCount || currentDist.Sum < previousSum {
-			// reset detected
-			return false
-		}
-		currentDist.Count -= initialDist.Count
-		currentDist.Sum -= initialDist.Sum
-		ma.adjustBuckets(currentDist.Buckets, initialDist.Buckets)
 	case metricspb.MetricDescriptor_SUMMARY:
-		// note: for summary, we don't adjust the snapshot
-		currentCount := current.GetSummaryValue().Count.GetValue()
-		currentSum := current.GetSummaryValue().Sum.GetValue()
-		initialCount := initial.GetSummaryValue().Count.GetValue()
-		initialSum := initial.GetSummaryValue().Sum.GetValue()
-		previousCount := initialCount
-		previousSum := initialSum
-		if initial != previous {
-			previousCount += previous.GetSummaryValue().Count.GetValue()
-			previousSum += previous.GetSummaryValue().Sum.GetValue()
-		}
-		if currentCount < previousCount || currentSum < previousSum {
-			// reset detected
-			return false
-		}
-		current.GetSummaryValue().Count =
-			&wrappers.Int64Value{Value: currentCount - initialCount}
-		current.GetSummaryValue().Sum =
-			&wrappers.DoubleValue{Value: currentSum - initialSum}
 	default:
 		// this shouldn't happen
 		ma.logger.Infof("adjust unexpect point type %v, skipping ...", metricType.String())
 	}
-	return true
 }
 
-func (ma *MetricsAdjuster) adjustBuckets(current, initial []*metricspb.DistributionValue_Bucket) {
-	if len(current) != len(initial) {
-		// this shouldn't happen
-		ma.logger.Infof("len(current buckets): %v != len(initial buckets): %v",
-			len(current), len(initial))
+func (ma *MetricsAdjuster) ExportTimeSeries() []*metricspb.Metric {
+	metrics := make([]*metricspb.Metric, 0)
+	for _, resV := range aggResMap {
+		for _, metricV := range resV.metricMap {
+			metric := &metricspb.Metric{
+				MetricDescriptor: metricV.metric.MetricDescriptor,
+				Resource: resV.res,
+				Timeseries: []*metricspb.TimeSeries{},
+			}
+			for _, tsV := range metricV.tsMap {
+				metric.Timeseries = append(metric.Timeseries, tsV)
+			}
+			metrics = append(metrics, metric)
+		}
 	}
-	for i := 0; i < len(current); i++ {
-		current[i].Count -= initial[i].Count
-	}
+	return metrics
 }
