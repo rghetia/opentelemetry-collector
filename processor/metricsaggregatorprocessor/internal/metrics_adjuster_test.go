@@ -28,7 +28,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"go.uber.org/zap"
-
 )
 
 func Test_CumulativeDouble(t *testing.T) {
@@ -39,7 +38,7 @@ func Test_CumulativeDouble(t *testing.T) {
 				resourcekeys.ContainerKeyName: true,
 			},
 			dropLabelKeyMap: map[string]bool{},
-			inDir: "CumulativeDouble",
+			inDir:           "CumulativeDouble",
 		},
 		{
 			description: "Drop Container Key Name for Cumulative Int64",
@@ -47,7 +46,7 @@ func Test_CumulativeDouble(t *testing.T) {
 				resourcekeys.ContainerKeyName: true,
 			},
 			dropLabelKeyMap: map[string]bool{},
-			inDir: "CumulativeInt64",
+			inDir:           "CumulativeInt64",
 		},
 		{
 			description: "Drop Container Key Name for Cumulative Distribution",
@@ -55,7 +54,7 @@ func Test_CumulativeDouble(t *testing.T) {
 				resourcekeys.ContainerKeyName: true,
 			},
 			dropLabelKeyMap: map[string]bool{},
-			inDir: "CumulativeDistribution",
+			inDir:           "CumulativeDistribution",
 		},
 	}
 	runScript(t, NewJobsMap(time.Duration(time.Minute)).Get("job", "0"), script)

@@ -77,10 +77,10 @@ func getLabelKeySignature(labelKeys []string, metric *metricspb.Metric) string {
 func (arm *aggResourceMap) getOrCreateAggRes(dropResKeys, dropLabelKeys map[string]bool, metric *metricspb.Metric) *aggResource {
 	var resKeys []string
 	var aggRes *aggResource
-	if metric.Resource != nil{
+	if metric.Resource != nil {
 		resKeys = make([]string, 0, len(metric.Resource.Labels))
 		for key := range metric.Resource.Labels {
-			if _, ok := dropResKeys[key] ; !ok {
+			if _, ok := dropResKeys[key]; !ok {
 				resKeys = append(resKeys, key)
 			}
 		}
@@ -97,7 +97,7 @@ func (arm *aggResourceMap) getOrCreateAggRes(dropResKeys, dropLabelKeys map[stri
 		if !ok {
 			aggRes = &aggResource{
 				res: &resourcepb.Resource{
-					Type: metric.Resource.Type,
+					Type:   metric.Resource.Type,
 					Labels: make(map[string]string, len(resKeys)),
 				},
 				metricMap: map[string]*aggMetric{},
@@ -150,12 +150,12 @@ func (ar *aggResource) getOrCreateAggMetric(dropResKeys, dropLabelKeys map[strin
 				MetricDescriptor: &metricspb.MetricDescriptor{
 					Name:        metric.MetricDescriptor.Name,
 					Description: metric.MetricDescriptor.Description,
-					Unit: 		 metric.MetricDescriptor.Unit,
+					Unit:        metric.MetricDescriptor.Unit,
 					Type:        metric.MetricDescriptor.Type,
 				},
 				Timeseries: []*metricspb.TimeSeries{},
 			},
-			tsMap: map[string]*metricspb.TimeSeries{},
+			tsMap:  map[string]*metricspb.TimeSeries{},
 			keyMap: make(map[string]bool, len(labelKeys)),
 		}
 		for _, k := range labelKeys {
@@ -181,7 +181,7 @@ func copyTimeSeries(metricType metricspb.MetricDescriptor_Type, ts *metricspb.Ti
 	case metricspb.MetricDescriptor_CUMULATIVE_DOUBLE:
 		newTs := &metricspb.TimeSeries{
 			StartTimestamp: timeToProtoTimestamp(time.Now()),
-			LabelValues: labelValues,
+			LabelValues:    labelValues,
 			Points: []*metricspb.Point{
 				{
 					Timestamp: timeToProtoTimestamp(time.Now()),
@@ -195,7 +195,7 @@ func copyTimeSeries(metricType metricspb.MetricDescriptor_Type, ts *metricspb.Ti
 	case metricspb.MetricDescriptor_CUMULATIVE_INT64:
 		newTs := &metricspb.TimeSeries{
 			StartTimestamp: timeToProtoTimestamp(time.Now()),
-			LabelValues: labelValues,
+			LabelValues:    labelValues,
 			Points: []*metricspb.Point{
 				{
 					Timestamp: timeToProtoTimestamp(time.Now()),
@@ -212,11 +212,9 @@ func copyTimeSeries(metricType metricspb.MetricDescriptor_Type, ts *metricspb.Ti
 		buckets := make([]*metricspb.DistributionValue_Bucket, len(bounds)+1)
 		for i, b := range bounds {
 			boundsCopy[i] = b
-			buckets[i] = &metricspb.DistributionValue_Bucket{
-			}
+			buckets[i] = &metricspb.DistributionValue_Bucket{}
 		}
-		buckets[len(bounds)] = &metricspb.DistributionValue_Bucket{
-		}
+		buckets[len(bounds)] = &metricspb.DistributionValue_Bucket{}
 		dv := &metricspb.DistributionValue{
 			BucketOptions: &metricspb.DistributionValue_BucketOptions{
 				Type: &metricspb.DistributionValue_BucketOptions_Explicit_{
@@ -231,7 +229,7 @@ func copyTimeSeries(metricType metricspb.MetricDescriptor_Type, ts *metricspb.Ti
 
 		newTs := &metricspb.TimeSeries{
 			StartTimestamp: timeToProtoTimestamp(time.Now()),
-			LabelValues: labelValues,
+			LabelValues:    labelValues,
 			Points: []*metricspb.Point{
 				{
 					Timestamp: timeToProtoTimestamp(time.Now()),
@@ -251,7 +249,7 @@ func (am *aggMetric) getOrCreateTimeSeries(dropResKeys, dropLabelKeys map[string
 	var labelValues = make([]*metricspb.LabelValue, 0, len(am.keyMap))
 
 	for i, k := range metric.MetricDescriptor.LabelKeys {
-		if _, ok := am.keyMap[k.Key] ; ok {
+		if _, ok := am.keyMap[k.Key]; ok {
 			labelValues = append(labelValues, series.LabelValues[i])
 		}
 	}
@@ -290,8 +288,7 @@ func (tsm *timeseriesMap) get(
 	sig := getSigWithResAndLabels(name, res, values)
 	tsi, ok := tsm.tsiMap[sig]
 	if !ok {
-		tsi = &timeseriesinfo{
-		}
+		tsi = &timeseriesinfo{}
 		tsm.tsiMap[sig] = tsi
 	}
 	tsm.mark = true
@@ -582,8 +579,8 @@ func (ma *MetricsAdjuster) ExportTimeSeries() []*metricspb.Metric {
 		for _, metricV := range resV.metricMap {
 			metric := &metricspb.Metric{
 				MetricDescriptor: metricV.metric.MetricDescriptor,
-				Resource: resV.res,
-				Timeseries: []*metricspb.TimeSeries{},
+				Resource:         resV.res,
+				Timeseries:       []*metricspb.TimeSeries{},
 			}
 			metricV.Lock()
 			for _, tsV := range metricV.tsMap {

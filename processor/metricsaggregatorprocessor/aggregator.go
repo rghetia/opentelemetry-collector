@@ -22,9 +22,9 @@ import (
 
 	"go.uber.org/zap"
 
+	commonpb "github.com/census-instrumentation/opencensus-proto/gen-go/agent/common/v1"
 	"github.com/open-telemetry/opentelemetry-service/consumer"
 	"github.com/open-telemetry/opentelemetry-service/consumer/consumerdata"
-	commonpb "github.com/census-instrumentation/opencensus-proto/gen-go/agent/common/v1"
 	"github.com/open-telemetry/opentelemetry-service/processor/metricsaggregatorprocessor/internal"
 )
 
@@ -36,20 +36,20 @@ const (
 //
 // aggregator implements consumer.MetricsConsumer
 type aggregator struct {
-	jobsMap *internal.JobsMap
+	jobsMap  *internal.JobsMap
 	adjuster *internal.MetricsAdjuster
-	sender consumer.MetricsConsumer
-	name   string
-	logger *zap.SugaredLogger
-	node   *commonpb.Node
+	sender   consumer.MetricsConsumer
+	name     string
+	logger   *zap.SugaredLogger
+	node     *commonpb.Node
 
 	reportingInterval  time.Duration
 	dropResourceKeys   []string
 	dropLabelKeys      []string
 	dropResourceKeyMap map[string]bool
 	dropLabelKeyMap    map[string]bool
-	stopCh                   chan struct{}
-	stopOnce                 sync.Once
+	stopCh             chan struct{}
+	stopOnce           sync.Once
 }
 
 var _ consumer.MetricsConsumer = (*aggregator)(nil)
@@ -63,8 +63,8 @@ func NewAggregator(name string, logger *zap.SugaredLogger, sender consumer.Metri
 		logger: logger,
 		node: &commonpb.Node{
 			Identifier: &commonpb.ProcessIdentifier{
-				Pid: uint32(os.Getpid()),
-				HostName: func() string { h, _ := os.Hostname() ; return h}(),
+				Pid:      uint32(os.Getpid()),
+				HostName: func() string { h, _ := os.Hostname(); return h }(),
 			},
 		},
 
@@ -77,7 +77,7 @@ func NewAggregator(name string, logger *zap.SugaredLogger, sender consumer.Metri
 	}
 
 	b.jobsMap = internal.NewJobsMap(time.Duration(2 * time.Minute))
-	b.adjuster = internal.NewMetricsAdjuster(b.jobsMap.Get("aggregator",  "1"), b.logger)
+	b.adjuster = internal.NewMetricsAdjuster(b.jobsMap.Get("aggregator", "1"), b.logger)
 
 	b.dropResourceKeyMap = make(map[string]bool, len(b.dropResourceKeys))
 	for _, k := range b.dropResourceKeys {
@@ -101,7 +101,7 @@ func NewAggregator(name string, logger *zap.SugaredLogger, sender consumer.Metri
 				metrics := b.adjuster.ExportTimeSeries()
 				md := consumerdata.MetricsData{
 					Metrics: metrics,
-					Node: b.node,
+					Node:    b.node,
 				}
 				sender.ConsumeMetricsData(ctx, md)
 			}
