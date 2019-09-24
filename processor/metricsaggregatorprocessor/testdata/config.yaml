@@ -1,0 +1,18 @@
+receivers:
+  examplereceiver:
+
+processors:
+  aggregator:
+  aggregator/2:
+    reporting-interval: 60s
+    drop-resource-keys: ["container_name"]
+    drop-label-keys: ["opencensus_task"]
+
+exporters:
+  exampleexporter:
+
+pipelines:
+  traces:
+    receivers: [examplereceiver]
+    processors: [aggregator/2]
+    exporters: [exampleexporter]

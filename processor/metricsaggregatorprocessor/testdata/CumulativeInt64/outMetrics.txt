@@ -1,0 +1,52 @@
+metric_descriptor: <
+  name: "ocagent.io/metricCummInt64"
+  description: "Description of metricCummInt64"
+  unit: "ms"
+  type: CUMULATIVE_INT64
+  label_keys: <
+    key: "empty_key"
+  >
+  label_keys: <
+    key: "operation_type"
+  >
+>
+resource: <
+  type: "container"
+  labels: <
+    key: "cloud.zone"
+    value: "zone1"
+  >
+  labels: <
+    key: "k8s.cluster.name"
+    value: "cluster1"
+  >
+  labels: <
+    key: "k8s.namespace.name"
+    value: "namespace1"
+  >
+  labels: <
+    key: "k8s.pod.name"
+    value: "pod1"
+  >
+>
+timeseries: <
+  start_timestamp: <
+    seconds: 1543160298
+    nanos: 100000090
+  >
+  label_values: <
+    has_value: true
+  >
+  label_values: <
+    value: "test_1"
+    has_value: true
+  >
+  points: <
+    timestamp: <
+      seconds: 1543160298
+      nanos: 100000997
+    >
+    int64_value: 220
+  >
+>
+

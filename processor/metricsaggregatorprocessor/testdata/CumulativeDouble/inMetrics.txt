@@ -1,0 +1,192 @@
+metric_descriptor: <
+  name: "ocagent.io/metricCummDouble"
+  description: "Description of metricCummDouble"
+  unit: "ms"
+  type: CUMULATIVE_DOUBLE
+  label_keys: <
+    key: "empty_key"
+  >
+  label_keys: <
+    key: "operation_type"
+  >
+>
+resource: <
+  type: "container"
+  labels: <
+    key: "cloud.zone"
+    value: "zone1"
+  >
+  labels: <
+    key: "container.name"
+    value: "container-name1"
+  >
+  labels: <
+    key: "k8s.cluster.name"
+    value: "cluster1"
+  >
+  labels: <
+    key: "k8s.namespace.name"
+    value: "namespace1"
+  >
+  labels: <
+    key: "k8s.pod.name"
+    value: "pod1"
+  >
+>
+timeseries: <
+  start_timestamp: <
+    seconds: 1543160298
+    nanos: 100000090
+  >
+  label_values: <
+    has_value: true
+  >
+  label_values: <
+    value: "test_1"
+    has_value: true
+  >
+  points: <
+    timestamp: <
+      seconds: 1543160298
+      nanos: 100000997
+    >
+    double_value: 35.0
+  >
+>
+timeseries: <
+  start_timestamp: <
+    seconds: 1543160298
+    nanos: 100000090
+  >
+  label_values: <
+    has_value: true
+  >
+  label_values: <
+    value: "test_1"
+    has_value: true
+  >
+  points: <
+    timestamp: <
+      seconds: 1543160358
+      nanos: 100000997
+    >
+    double_value: 65.0
+  >
+>
+timeseries: <
+  start_timestamp: <
+    seconds: 1543160298
+    nanos: 100000090
+  >
+  label_values: <
+    has_value: true
+  >
+  label_values: <
+    value: "test_1"
+    has_value: true
+  >
+  points: <
+    timestamp: <
+      seconds: 1543160418
+      nanos: 100000997
+    >
+    double_value: 55.0
+  >
+>
+---
+metric_descriptor: <
+  name: "ocagent.io/metricCummDouble"
+  description: "Description of metricCummDouble"
+  unit: "ms"
+  type: CUMULATIVE_DOUBLE
+  label_keys: <
+    key: "empty_key"
+  >
+  label_keys: <
+    key: "operation_type"
+  >
+>
+resource: <
+  type: "container"
+  labels: <
+    key: "cloud.zone"
+    value: "zone1"
+  >
+  labels: <
+    key: "container.name"
+    value: "container-name2"
+  >
+  labels: <
+    key: "k8s.cluster.name"
+    value: "cluster1"
+  >
+  labels: <
+    key: "k8s.namespace.name"
+    value: "namespace1"
+  >
+  labels: <
+    key: "k8s.pod.name"
+    value: "pod1"
+  >
+>
+timeseries: <
+  start_timestamp: <
+    seconds: 1543160298
+    nanos: 100000090
+  >
+  label_values: <
+    has_value: true
+  >
+  label_values: <
+    value: "test_1"
+    has_value: true
+  >
+  points: <
+    timestamp: <
+      seconds: 1543160298
+      nanos: 100000997
+    >
+    double_value: 25.0
+  >
+>
+timeseries: <
+  start_timestamp: <
+    seconds: 1543160298
+    nanos: 100000090
+  >
+  label_values: <
+    has_value: true
+  >
+  label_values: <
+    value: "test_1"
+    has_value: true
+  >
+  points: <
+    timestamp: <
+      seconds: 1543160358
+      nanos: 100000997
+    >
+    double_value: 120.0
+  >
+>
+timeseries: <
+  start_timestamp: <
+    seconds: 1543160298
+    nanos: 100000090
+  >
+  label_values: <
+    has_value: true
+  >
+  label_values: <
+    value: "test_1"
+    has_value: true
+  >
+  points: <
+    timestamp: <
+      seconds: 1543160418
+      nanos: 100000997
+    >
+    double_value: 160.0
+  >
+>
+
