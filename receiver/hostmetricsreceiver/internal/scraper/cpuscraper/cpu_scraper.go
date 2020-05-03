@@ -105,6 +105,7 @@ func (c *Scraper) scrapeAndAppendMetrics(metrics pdata.MetricSlice) error {
 		return err
 	}
 
+  fmt.Printf("cpuTimes len: %d, cpu: %v\n", len(cpuTimes), cpuTimes)
 	metric := internal.AddNewMetric(metrics)
 	initializeCPUSecondsMetric(metric, c.startTime, cpuTimes)
 	return nil

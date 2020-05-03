@@ -16,6 +16,7 @@ package cpuscraper
 
 import (
 	"context"
+	"fmt"
 	"runtime"
 	"testing"
 	"time"
@@ -42,10 +43,11 @@ func TestScrapeMetrics_MinimalData(t *testing.T) {
 		internal.AssertDescriptorEqual(t, MetricCPUSecondsDescriptor, hostCPUTimeMetric.MetricDescriptor())
 		assert.GreaterOrEqual(t, hostCPUTimeMetric.Int64DataPoints().Len(), 4)
 		internal.AssertInt64MetricLabelDoesNotExist(t, hostCPUTimeMetric, 0, CPULabel)
-		internal.AssertInt64MetricLabelHasValue(t, hostCPUTimeMetric, 0, StateLabel, UserStateLabelValue)
-		internal.AssertInt64MetricLabelHasValue(t, hostCPUTimeMetric, 1, StateLabel, SystemStateLabelValue)
-		internal.AssertInt64MetricLabelHasValue(t, hostCPUTimeMetric, 2, StateLabel, IdleStateLabelValue)
-		internal.AssertInt64MetricLabelHasValue(t, hostCPUTimeMetric, 3, StateLabel, InterruptStateLabelValue)
+		commonValidate(t, hostCPUTimeMetric, 1)
+		//internal.AssertInt64MetricLabelHasValue(t, hostCPUTimeMetric, 0, StateLabel, UserStateLabelValue)
+		//internal.AssertInt64MetricLabelHasValue(t, hostCPUTimeMetric, 1, StateLabel, SystemStateLabelValue)
+		//internal.AssertInt64MetricLabelHasValue(t, hostCPUTimeMetric, 2, StateLabel, IdleStateLabelValue)
+		//internal.AssertInt64MetricLabelHasValue(t, hostCPUTimeMetric, 3, StateLabel, InterruptStateLabelValue)
 	})
 }
 
@@ -65,10 +67,11 @@ func TestScrapeMetrics_AllData(t *testing.T) {
 		internal.AssertDescriptorEqual(t, MetricCPUSecondsDescriptor, hostCPUTimeMetric.MetricDescriptor())
 		assert.GreaterOrEqual(t, hostCPUTimeMetric.Int64DataPoints().Len(), runtime.NumCPU()*4)
 		internal.AssertInt64MetricLabelExists(t, hostCPUTimeMetric, 0, CPULabel)
-		internal.AssertInt64MetricLabelHasValue(t, hostCPUTimeMetric, 0, StateLabel, UserStateLabelValue)
-		internal.AssertInt64MetricLabelHasValue(t, hostCPUTimeMetric, 1, StateLabel, SystemStateLabelValue)
-		internal.AssertInt64MetricLabelHasValue(t, hostCPUTimeMetric, 2, StateLabel, IdleStateLabelValue)
-		internal.AssertInt64MetricLabelHasValue(t, hostCPUTimeMetric, 3, StateLabel, InterruptStateLabelValue)
+		commonValidate(t, hostCPUTimeMetric, runtime.NumCPU()+1)
+		//internal.AssertInt64MetricLabelHasValue(t, hostCPUTimeMetric, 0, StateLabel, UserStateLabelValue)
+		//internal.AssertInt64MetricLabelHasValue(t, hostCPUTimeMetric, 1, StateLabel, SystemStateLabelValue)
+		//internal.AssertInt64MetricLabelHasValue(t, hostCPUTimeMetric, 2, StateLabel, IdleStateLabelValue)
+		//internal.AssertInt64MetricLabelHasValue(t, hostCPUTimeMetric, 3, StateLabel, InterruptStateLabelValue)
 	})
 }
 
@@ -117,4 +120,19 @@ func createScraperAndValidateScrapedMetrics(t *testing.T, config *Config, assert
 		assertFn(t, got)
 		return true
 	}, time.Second, 10*time.Millisecond, "No metrics were collected")
+}
+
+func commonValidate(t *testing.T, hostCPUTimeMetric pdata.Metric, numCpu int) {
+	labelValues := []string{UserStateLabelValue, SystemStateLabelValue, IdleStateLabelValue, InterruptStateLabelValue}
+	if runtime.GOOS == "linux" {
+		labelValues = append(labelValues, NiceStateLabelValue, SoftIRQStateLabelValue, StealStateLabelValue, WaitStateLabelValue)
+	}
+
+	lvLen := len(labelValues)
+	fmt.Printf("Testing cpus:%d, lvs:%d, dps:%d\n dp:%v\n", numCpu, lvLen, hostCPUTimeMetric.Int64DataPoints().Len(), hostCPUTimeMetric)
+	for i := 0; i < numCpu; i++ {
+		for j, lv := range labelValues {
+			internal.AssertInt64MetricLabelHasValue(t, hostCPUTimeMetric, i*lvLen + j, StateLabel, lv)
+		}
+	}
 }
